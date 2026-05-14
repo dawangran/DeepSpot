@@ -42,24 +42,50 @@ def setup_logger(output_dir: str, log_file: str | None = None):
 
     return logger, log_file
 
-def nanopore_normalize_huada(signal: np.ndarray) -> np.ndarray:
+def normalize_one_chunk(signal: np.ndarray) -> np.ndarray:
     if signal.size == 0:
         return np.array([], dtype=np.float32)
     med = np.median(signal)
-    mad = 1.4826 * np.median(np.abs(signal - med))
-    mad = max(mad, 1.0)
+    mad = np.median(np.abs(signal - med))
+    if mad < 1e-8:
+        return np.array([], dtype=np.float32)
     normalized = (signal - med) / mad
     return normalized.astype(np.float32)
 
 
-def make_chunks(signal: np.ndarray, chunk_len: int = 128, stride: int = 64):
+def make_chunks_with_filter(
+    signal: np.ndarray,
+    chunk_len: int = 128,
+    stride: int = 64,
+    value_min: float = -3.0,
+    value_max: float = 3.0,
+):
     n = len(signal)
     if n < chunk_len:
-        return np.empty((0, chunk_len), dtype=np.float32), np.array([], dtype=np.int64)
+        return np.empty((0, chunk_len), dtype=np.float32), np.array([], dtype=np.int64), 0, 0
 
     starts = np.arange(0, n - chunk_len + 1, stride, dtype=np.int64)
-    chunks = np.stack([signal[s:s + chunk_len] for s in starts], axis=0).astype(np.float32)
-    return chunks, starts
+    kept_chunks = []
+    kept_starts = []
+    total_candidates = len(starts)
+    dropped_chunks = 0
+
+    for s in starts:
+        chunk = signal[s:s + chunk_len].astype(np.float32)
+        chunk_norm = normalize_one_chunk(chunk)
+        if chunk_norm.size == 0:
+            dropped_chunks += 1
+            continue
+        if np.any(chunk_norm < value_min) or np.any(chunk_norm > value_max):
+            dropped_chunks += 1
+            continue
+        kept_chunks.append(chunk_norm)
+        kept_starts.append(s)
+
+    if len(kept_chunks) == 0:
+        return np.empty((0, chunk_len), dtype=np.float32), np.array([], dtype=np.int64), total_candidates, dropped_chunks
+
+    return np.stack(kept_chunks, axis=0).astype(np.float32), np.array(kept_starts, dtype=np.int64), total_candidates, dropped_chunks
 
 
 def compute_chunk_features(chunks: np.ndarray):
@@ -159,6 +185,8 @@ def process_one_ccf5(
     trim_tail: int,
     chunk_len: int,
     stride: int,
+    value_min: float,
+    value_max: float,
     threads: int,
     batchsize: int,
     logger,
@@ -241,12 +269,13 @@ def process_one_ccf5(
             continue
 
         signal_trimmed = signal[trim_head: len(signal) - trim_tail]
-        signal_processed = nanopore_normalize_huada(signal_trimmed)
 
-        chunks, starts = make_chunks(
-            signal_processed,
+        chunks, starts, total_candidates, dropped_chunks = make_chunks_with_filter(
+            signal_trimmed,
             chunk_len=chunk_len,
-            stride=stride
+            stride=stride,
+            value_min=value_min,
+            value_max=value_max,
         )
 
         if len(chunks) == 0:
@@ -300,6 +329,8 @@ def process_one_ccf5(
         trimmed_lengths=all_trimmed_lengths,
         chunk_len=np.array([chunk_len], dtype=np.int32),
         stride=np.array([stride], dtype=np.int32),
+        value_min=np.array([value_min], dtype=np.float32),
+        value_max=np.array([value_max], dtype=np.float32),
         trim_head=np.array([trim_head], dtype=np.int32),
         trim_tail=np.array([trim_tail], dtype=np.int32),
         min_raw_len=np.array([min_raw_len], dtype=np.int32),
@@ -321,6 +352,8 @@ def process_one_ccf5(
         f.write(f"total_chunks\t{total_chunks}\n")
         f.write(f"chunk_len\t{chunk_len}\n")
         f.write(f"stride\t{stride}\n")
+        f.write(f"value_min\t{value_min}\n")
+        f.write(f"value_max\t{value_max}\n")
         f.write(f"trim_head\t{trim_head}\n")
         f.write(f"trim_tail\t{trim_tail}\n")
         f.write(f"min_raw_len\t{min_raw_len}\n")
@@ -356,6 +389,8 @@ def main():
     parser.add_argument("--trim_tail", type=int, default=2000, help="Trim from tail")
     parser.add_argument("--chunk_len", type=int, default=128, help="Chunk length")
     parser.add_argument("--stride", type=int, default=64, help="Chunk stride")
+    parser.add_argument("--value_min", type=float, default=-3.0, help="Minimum allowed normalized value in a chunk")
+    parser.add_argument("--value_max", type=float, default=3.0, help="Maximum allowed normalized value in a chunk")
     parser.add_argument("--threads", type=int, default=1, help="Reserved arg; kept for CLI compatibility")
     parser.add_argument("--batchsize", type=int, default=1, help="Reserved arg; kept for CLI compatibility")
     parser.add_argument("--log_every_reads", type=int, default=500, help="Print progress every N reads")
@@ -370,7 +405,7 @@ def main():
         "Parameters | "
         f"input_dir={args.input_dir} output_dir={args.output_dir} pattern={args.pattern} "
         f"min_raw_len={args.min_raw_len} trim_head={args.trim_head} trim_tail={args.trim_tail} "
-        f"chunk_len={args.chunk_len} stride={args.stride} threads={args.threads} "
+        f"chunk_len={args.chunk_len} stride={args.stride} value_min={args.value_min} value_max={args.value_max} threads={args.threads} "
         f"batchsize={args.batchsize} log_every_reads={args.log_every_reads} log_file={log_file}"
     )
 
@@ -398,6 +433,8 @@ def main():
             trim_tail=args.trim_tail,
             chunk_len=args.chunk_len,
             stride=args.stride,
+            value_min=args.value_min,
+            value_max=args.value_max,
             threads=args.threads,
             batchsize=args.batchsize,
             logger=logger,

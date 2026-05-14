@@ -7,39 +7,77 @@ import argparse
 import numpy as np
 
 
-def nanopore_normalize(signal: np.ndarray) -> np.ndarray:
+def normalize_one_chunk(signal: np.ndarray) -> np.ndarray:
     """
-    Robust normalization:
+    对单个 chunk 做 robust 标准化：
         x' = (x - median) / MAD
+
+    这里严格按用户给定规则，不乘 1.4826。
     """
     if signal.size == 0:
         return np.array([], dtype=np.float32)
 
     med = np.median(signal)
-    mad = 1.4826 * np.median(np.abs(signal - med))
-    mad = max(mad, 1.0)  # avoid division by near-zero
+    mad = np.median(np.abs(signal - med))
+    if mad < 1e-8:
+        return np.array([], dtype=np.float32)
 
     normalized = (signal - med) / mad
     return normalized.astype(np.float32)
 
 
-def make_chunks(signal: np.ndarray, chunk_len: int = 128, stride: int = 64):
+def make_chunks_with_filter(
+    signal: np.ndarray,
+    chunk_len: int = 128,
+    stride: int = 64,
+    value_min: float = -3.0,
+    value_max: float = 3.0,
+):
     """
-    signal: shape (L,)
-    return:
-        chunks: shape (N, chunk_len)
-        starts: shape (N,)
+    先切 chunk，再对每个 chunk 单独标准化。
+    仅保留标准化后所有值都在 [value_min, value_max] 的 chunk。
     """
     n = len(signal)
     if n < chunk_len:
         return (
             np.empty((0, chunk_len), dtype=np.float32),
             np.array([], dtype=np.int64),
+            0,
+            0,
         )
 
     starts = np.arange(0, n - chunk_len + 1, stride, dtype=np.int64)
-    chunks = np.stack([signal[s:s + chunk_len] for s in starts], axis=0).astype(np.float32)
-    return chunks, starts
+    kept_chunks = []
+    kept_starts = []
+    total_candidates = len(starts)
+    dropped_chunks = 0
+
+    for s in starts:
+        chunk = signal[s:s + chunk_len].astype(np.float32)
+        chunk_norm = normalize_one_chunk(chunk)
+        if chunk_norm.size == 0:
+            dropped_chunks += 1
+            continue
+        if np.any(chunk_norm < value_min) or np.any(chunk_norm > value_max):
+            dropped_chunks += 1
+            continue
+        kept_chunks.append(chunk_norm)
+        kept_starts.append(s)
+
+    if len(kept_chunks) == 0:
+        return (
+            np.empty((0, chunk_len), dtype=np.float32),
+            np.array([], dtype=np.int64),
+            total_candidates,
+            dropped_chunks,
+        )
+
+    return (
+        np.stack(kept_chunks, axis=0).astype(np.float32),
+        np.array(kept_starts, dtype=np.int64),
+        total_candidates,
+        dropped_chunks,
+    )
 
 
 def compute_chunk_features(chunks: np.ndarray):
@@ -100,6 +138,8 @@ def main():
     parser.add_argument("--chunk_len", type=int, default=128, help="Chunk length")
     parser.add_argument("--stride", type=int, default=64, help="Chunk stride")
     parser.add_argument("--min_len", type=int, default=128, help="Minimum signal length to keep")
+    parser.add_argument("--value_min", type=float, default=-3.0, help="Minimum allowed normalized value in a chunk")
+    parser.add_argument("--value_max", type=float, default=3.0, help="Maximum allowed normalized value in a chunk")
     args = parser.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
@@ -141,21 +181,20 @@ def main():
                 n_skipped_short += 1
                 continue
 
-            # 1) normalize, no trim
-            signal_processed = nanopore_normalize(signal)
-
-            # 2) chunk
-            chunks, starts = make_chunks(
-                signal_processed,
+            # 1) chunk first, then normalize each chunk independently
+            chunks, starts, total_candidates, dropped_chunks = make_chunks_with_filter(
+                signal,
                 chunk_len=args.chunk_len,
-                stride=args.stride
+                stride=args.stride,
+                value_min=args.value_min,
+                value_max=args.value_max,
             )
 
             if len(chunks) == 0:
                 n_skipped_short += 1
                 continue
 
-            # 3) features
+            # 2) features
             features, feature_names = compute_chunk_features(chunks)
 
             all_chunks.append(chunks)
@@ -218,6 +257,8 @@ def main():
         f.write(f"chunk_len\t{args.chunk_len}\n")
         f.write(f"stride\t{args.stride}\n")
         f.write(f"min_len\t{args.min_len}\n")
+        f.write(f"value_min\t{args.value_min}\n")
+        f.write(f"value_max\t{args.value_max}\n")
 
     print("[DONE]")
     print("saved to:", args.out_dir)
