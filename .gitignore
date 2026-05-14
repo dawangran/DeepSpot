@@ -1,0 +1,10 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local experiment outputs and large data should stay out of version control.
+data/raw/
+data/interim/
+data/processed/
+results/

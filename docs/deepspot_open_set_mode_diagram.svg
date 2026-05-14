@@ -1,0 +1,169 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="860" viewBox="0 0 1400 860" role="img" aria-labelledby="title desc">
+  <title id="title">DeepSpot open-set nanopore modification discovery schematic</title>
+  <desc id="desc">A schematic diagram for canonical nanopore signal modeling, natural sample open-set discovery, known modification fingerprint matching, and unknown modification clustering.</desc>
+  <defs>
+    <marker id="arrow-blue" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#2f6f9f"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#3f7f54"/>
+    </marker>
+    <marker id="arrow-amber" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#b8731f"/>
+    </marker>
+    <marker id="arrow-gray" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#5c6670"/>
+    </marker>
+    <filter id="soft-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="6" stdDeviation="6" flood-color="#1f2933" flood-opacity="0.12"/>
+    </filter>
+    <style>
+      .title { font: 700 32px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #17202a; }
+      .subtitle { font: 500 18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #52616f; }
+      .section { font: 700 18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #1f2933; }
+      .body { font: 500 15px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #2d3741; }
+      .small { font: 500 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #596673; }
+      .tiny { font: 500 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #6b7480; }
+      .tag { font: 700 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #ffffff; letter-spacing: .3px; }
+      .note { font: 600 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #4a5560; }
+      .card { filter: url(#soft-shadow); stroke-width: 1.4; }
+      .lane-label { font: 700 16px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #3b4652; }
+    </style>
+  </defs>
+
+  <rect width="1400" height="860" fill="#f7f9fb"/>
+
+  <text x="700" y="54" text-anchor="middle" class="title">DeepSpot 开放集纳米孔修饰发现模式图</text>
+  <text x="700" y="84" text-anchor="middle" class="subtitle">先学习未修饰信号的反事实模型，再在天然样本中发现已知与未知修饰信号</text>
+
+  <rect x="54" y="122" width="1292" height="150" rx="18" fill="#eef6fb" stroke="#c5dae7"/>
+  <rect x="54" y="316" width="1292" height="222" rx="18" fill="#f2f8f1" stroke="#c7ddc5"/>
+  <rect x="54" y="582" width="1292" height="182" rx="18" fill="#fff6e8" stroke="#e5c99e"/>
+
+  <text x="82" y="151" class="lane-label">1. Canonical normal model</text>
+  <text x="82" y="345" class="lane-label">2. Natural sample open-set discovery</text>
+  <text x="82" y="611" class="lane-label">3. Synthetic fingerprint calibration</text>
+
+  <g>
+    <rect x="86" y="176" width="230" height="76" rx="14" fill="#ffffff" stroke="#8cb7cf" class="card"/>
+    <rect x="104" y="194" width="54" height="24" rx="12" fill="#2f6f9f"/>
+    <text x="131" y="211" text-anchor="middle" class="tag">INPUT</text>
+    <text x="176" y="204" class="section">不带修饰数据</text>
+    <text x="106" y="232" class="small">canonical reads / controls</text>
+  </g>
+
+  <g>
+    <rect x="386" y="164" width="260" height="100" rx="14" fill="#ffffff" stroke="#8cb7cf" class="card"/>
+    <text x="516" y="194" text-anchor="middle" class="section">统一预处理</text>
+    <text x="516" y="221" text-anchor="middle" class="body">basecalling · alignment</text>
+    <text x="516" y="244" text-anchor="middle" class="body">signal-to-reference mapping</text>
+  </g>
+
+  <g>
+    <rect x="716" y="152" width="300" height="124" rx="14" fill="#ffffff" stroke="#8cb7cf" class="card"/>
+    <text x="866" y="183" text-anchor="middle" class="section">序列条件正常信号模型</text>
+    <text x="866" y="212" text-anchor="middle" class="body">P(signal | k-mer, quality, speed, batch)</text>
+    <text x="866" y="237" text-anchor="middle" class="small">预测“如果未修饰，应看到什么信号”</text>
+    <text x="866" y="259" text-anchor="middle" class="small">canonical counterfactual</text>
+  </g>
+
+  <g>
+    <rect x="1086" y="176" width="210" height="76" rx="14" fill="#ffffff" stroke="#8cb7cf" class="card"/>
+    <text x="1191" y="205" text-anchor="middle" class="section">正常信号分布</text>
+    <text x="1191" y="232" text-anchor="middle" class="small">context-specific baseline</text>
+  </g>
+
+  <line x1="316" y1="214" x2="380" y2="214" stroke="#2f6f9f" stroke-width="3" marker-end="url(#arrow-blue)"/>
+  <line x1="646" y1="214" x2="710" y2="214" stroke="#2f6f9f" stroke-width="3" marker-end="url(#arrow-blue)"/>
+  <line x1="1016" y1="214" x2="1080" y2="214" stroke="#2f6f9f" stroke-width="3" marker-end="url(#arrow-blue)"/>
+
+  <g>
+    <rect x="86" y="382" width="230" height="92" rx="14" fill="#ffffff" stroke="#92bd8c" class="card"/>
+    <rect x="104" y="400" width="54" height="24" rx="12" fill="#3f7f54"/>
+    <text x="131" y="417" text-anchor="middle" class="tag">QUERY</text>
+    <text x="176" y="410" class="section">天然带修饰数据</text>
+    <text x="106" y="438" class="small">已知修饰 + 未知修饰</text>
+    <text x="106" y="459" class="small">部分修饰 + 技术噪声</text>
+  </g>
+
+  <g>
+    <rect x="386" y="370" width="260" height="116" rx="14" fill="#ffffff" stroke="#92bd8c" class="card"/>
+    <text x="516" y="400" text-anchor="middle" class="section">同一流程提取特征</text>
+    <text x="516" y="429" text-anchor="middle" class="body">raw signal window</text>
+    <text x="516" y="452" text-anchor="middle" class="body">event features · dwell time</text>
+    <text x="516" y="475" text-anchor="middle" class="body">basecaller logits · quality</text>
+  </g>
+
+  <g>
+    <rect x="716" y="356" width="300" height="144" rx="14" fill="#ffffff" stroke="#92bd8c" class="card"/>
+    <text x="866" y="388" text-anchor="middle" class="section">与 canonical 反事实比较</text>
+    <text x="866" y="418" text-anchor="middle" class="body">anomaly score</text>
+    <text x="866" y="443" text-anchor="middle" class="body">residual fingerprint</text>
+    <text x="866" y="468" text-anchor="middle" class="small">mean shift · shape residual · dwell shift</text>
+    <text x="866" y="490" text-anchor="middle" class="small">不预设全部修饰类别</text>
+  </g>
+
+  <g>
+    <rect x="1086" y="346" width="210" height="164" rx="14" fill="#ffffff" stroke="#92bd8c" class="card"/>
+    <text x="1191" y="377" text-anchor="middle" class="section">位点层聚合</text>
+    <text x="1191" y="407" text-anchor="middle" class="body">modified fraction</text>
+    <text x="1191" y="432" text-anchor="middle" class="body">cluster stability</text>
+    <text x="1191" y="457" text-anchor="middle" class="body">replicate consistency</text>
+    <text x="1191" y="482" text-anchor="middle" class="small">coverage / quality filters</text>
+  </g>
+
+  <line x1="316" y1="428" x2="380" y2="428" stroke="#3f7f54" stroke-width="3" marker-end="url(#arrow-green)"/>
+  <line x1="646" y1="428" x2="710" y2="428" stroke="#3f7f54" stroke-width="3" marker-end="url(#arrow-green)"/>
+  <line x1="1016" y1="428" x2="1080" y2="428" stroke="#3f7f54" stroke-width="3" marker-end="url(#arrow-green)"/>
+  <path d="M1191 252 C1191 286, 866 302, 866 350" fill="none" stroke="#5c6670" stroke-width="2.6" stroke-dasharray="7 7" marker-end="url(#arrow-gray)"/>
+  <text x="1014" y="303" class="tiny">canonical expectation</text>
+
+  <g>
+    <rect x="86" y="640" width="230" height="82" rx="14" fill="#ffffff" stroke="#d3a45f" class="card"/>
+    <rect x="104" y="658" width="54" height="24" rx="12" fill="#b8731f"/>
+    <text x="131" y="675" text-anchor="middle" class="tag">ANCHOR</text>
+    <text x="176" y="669" class="section">人工合成修饰数据</text>
+    <text x="106" y="697" class="small">known modification standards</text>
+  </g>
+
+  <g>
+    <rect x="386" y="628" width="260" height="106" rx="14" fill="#ffffff" stroke="#d3a45f" class="card"/>
+    <text x="516" y="659" text-anchor="middle" class="section">已知修饰指纹库</text>
+    <text x="516" y="688" text-anchor="middle" class="body">synthetic residual patterns</text>
+    <text x="516" y="713" text-anchor="middle" class="small">用于校准，不封闭标签空间</text>
+  </g>
+
+  <g>
+    <rect x="716" y="628" width="300" height="106" rx="14" fill="#ffffff" stroke="#d3a45f" class="card"/>
+    <text x="866" y="659" text-anchor="middle" class="section">指纹匹配与开放注释</text>
+    <text x="866" y="688" text-anchor="middle" class="body">known-mod similarity</text>
+    <text x="866" y="713" text-anchor="middle" class="body">unknown cluster discovery</text>
+  </g>
+
+  <line x1="316" y1="681" x2="380" y2="681" stroke="#b8731f" stroke-width="3" marker-end="url(#arrow-amber)"/>
+  <line x1="646" y1="681" x2="710" y2="681" stroke="#b8731f" stroke-width="3" marker-end="url(#arrow-amber)"/>
+  <path d="M1016 681 C1080 681, 1116 570, 1158 514" fill="none" stroke="#b8731f" stroke-width="2.8" stroke-dasharray="8 7" marker-end="url(#arrow-amber)"/>
+  <text x="1062" y="632" class="tiny">fingerprint comparison</text>
+
+  <g>
+    <rect x="82" y="792" width="1236" height="40" rx="20" fill="#ffffff" stroke="#c8d0d8"/>
+    <text x="700" y="817" text-anchor="middle" class="note">最终输出：修饰候选位点 · 修饰比例 · 已知修饰相似度 · 未知修饰簇 · 置信度 / FDR · 质量标记</text>
+  </g>
+
+  <g>
+    <rect x="1122" y="548" width="174" height="34" rx="17" fill="#e8f2f8" stroke="#9fc2d7"/>
+    <text x="1209" y="570" text-anchor="middle" class="body">canonical-like</text>
+
+    <rect x="1122" y="592" width="174" height="34" rx="17" fill="#edf7ec" stroke="#a8cfa3"/>
+    <text x="1209" y="614" text-anchor="middle" class="body">known-mod-like</text>
+
+    <rect x="1122" y="636" width="174" height="34" rx="17" fill="#fff0d8" stroke="#d9ad69"/>
+    <text x="1209" y="658" text-anchor="middle" class="body">unknown cluster</text>
+
+    <rect x="1122" y="680" width="174" height="34" rx="17" fill="#f3f4f6" stroke="#c2c8cf"/>
+    <text x="1209" y="702" text-anchor="middle" class="body">noise / low conf.</text>
+  </g>
+
+  <path d="M1191 510 L1191 542" fill="none" stroke="#5c6670" stroke-width="2.8" marker-end="url(#arrow-gray)"/>
+  <text x="1034" y="548" class="tiny">open-set decision</text>
+</svg>
