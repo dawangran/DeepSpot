@@ -4,6 +4,8 @@
 
 ```text
 128 点 raw signal window
+  -> 每个 window 单独 robust 标准化
+  -> 标准化后整段 window 通过 value_min/value_max 过滤
   -> 变点检测得到可变数量 events
   -> raw/event 双表示
   -> 用 unmodified 训练正常模型
@@ -36,9 +38,13 @@ python3 scripts/stage1_build_windows.py \
   --condition unmodified \
   --window_len 128 \
   --stride 64 \
+  --normalize window_mad \
+  --value_min -3.0 \
+  --value_max 3.0 \
   --max_events 16 \
   --penalty 8.0 \
-  --min_event_len 5
+  --min_event_len 5 \
+  --event_backend simple
 ```
 
 CCF5 单文件或多文件：
@@ -52,9 +58,13 @@ python3 scripts/stage1_build_windows.py \
   --condition unmodified \
   --window_len 128 \
   --stride 64 \
+  --normalize window_mad \
+  --value_min -3.0 \
+  --value_max 3.0 \
   --max_events 16 \
   --penalty 8.0 \
   --min_event_len 5 \
+  --event_backend simple \
   --trim_head 2000 \
   --trim_tail 2000
 ```
@@ -72,6 +82,16 @@ python3 scripts/stage1_build_windows.py \
 ```
 
 使用 CCF5 输入时需要额外安装 `pyccf5`。`trim_head` 和 `trim_tail` 只作用于 CCF5，用于去掉 read 首尾不稳定 raw signal；输出的 `window_start` 保持为原 read raw-signal 坐标。
+
+默认标准化策略是 `window_mad`，也兼容别名 `chunk_mad`：
+
+```text
+先切 window/chunk
+再对每个 window/chunk 单独做 (x - median) / MAD
+标准化后如果任意值不在 [value_min, value_max]，整个 window/chunk 丢弃
+```
+
+`--event_backend simple` 使用仓库内置二分变点检测。安装 `ruptures` 后可以改用 `--event_backend ruptures`，更适合 piecewise-constant 电流信号，但 `--penalty` 的数值尺度需要重新校准。
 
 输出：
 

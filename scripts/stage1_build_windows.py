@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -36,13 +37,20 @@ def main() -> None:
     parser.add_argument("--max_events", type=int, default=16)
     parser.add_argument("--penalty", type=float, default=8.0, help="Binary segmentation SSE gain threshold.")
     parser.add_argument("--min_event_len", type=int, default=5)
+    parser.add_argument("--event_backend", choices=["simple", "ruptures"], default="simple")
     parser.add_argument("--min_signal_len", type=int, default=128)
-    parser.add_argument("--normalize", choices=["read_mad", "none"], default="read_mad")
+    parser.add_argument("--normalize", choices=["window_mad", "chunk_mad", "read_mad", "none"], default="window_mad")
+    parser.add_argument("--value_min", type=float, default=-3.0, help="Minimum allowed value after per-window normalization.")
+    parser.add_argument("--value_max", type=float, default=3.0, help="Maximum allowed value after per-window normalization.")
     parser.add_argument("--trim_head", type=int, default=0, help="CCF5 only: raw samples trimmed from read head before windowing.")
     parser.add_argument("--trim_tail", type=int, default=0, help="CCF5 only: raw samples trimmed from read tail before windowing.")
     parser.add_argument("--max_reads", type=int, default=0, help="Debug limit. 0 means all reads.")
     parser.add_argument("--max_windows", type=int, default=0, help="Debug limit. 0 means all windows.")
     args = parser.parse_args()
+    if args.value_min > args.value_max:
+        parser.error("--value_min must be <= --value_max")
+    if args.event_backend == "ruptures" and importlib.util.find_spec("ruptures") is None:
+        parser.error("--event_backend ruptures requires installing the optional dependency `ruptures`")
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -55,8 +63,11 @@ def main() -> None:
             max_events=args.max_events,
             penalty=args.penalty,
             min_event_len=args.min_event_len,
+            event_backend=args.event_backend,
             min_signal_len=args.min_signal_len,
             normalize=args.normalize,
+            value_min=args.value_min,
+            value_max=args.value_max,
             sample_id=args.sample_id,
             condition=args.condition,
             max_reads=args.max_reads,
@@ -81,8 +92,11 @@ def main() -> None:
                 max_events=args.max_events,
                 penalty=args.penalty,
                 min_event_len=args.min_event_len,
+                event_backend=args.event_backend,
                 min_signal_len=args.min_signal_len,
                 normalize=args.normalize,
+                value_min=args.value_min,
+                value_max=args.value_max,
                 sample_id=args.sample_id,
                 condition=args.condition,
                 max_reads=args.max_reads,

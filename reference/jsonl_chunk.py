@@ -141,6 +141,8 @@ def main():
     parser.add_argument("--value_min", type=float, default=-3.0, help="Minimum allowed normalized value in a chunk")
     parser.add_argument("--value_max", type=float, default=3.0, help="Maximum allowed normalized value in a chunk")
     args = parser.parse_args()
+    if args.value_min > args.value_max:
+        parser.error("--value_min must be <= --value_max")
 
     os.makedirs(args.out_dir, exist_ok=True)
 
@@ -156,6 +158,8 @@ def main():
     n_total = 0
     n_kept = 0
     n_skipped_short = 0
+    total_chunk_candidates = 0
+    total_dropped_chunks = 0
     total_chunks = 0
 
     with open(args.input_jsonl, "r") as f:
@@ -189,6 +193,8 @@ def main():
                 value_min=args.value_min,
                 value_max=args.value_max,
             )
+            total_chunk_candidates += total_candidates
+            total_dropped_chunks += dropped_chunks
 
             if len(chunks) == 0:
                 n_skipped_short += 1
@@ -241,6 +247,9 @@ def main():
         chunk_len=np.array([args.chunk_len], dtype=np.int32),
         stride=np.array([args.stride], dtype=np.int32),
         min_len=np.array([args.min_len], dtype=np.int32),
+        normalize=np.array(["chunk_mad"], dtype=object),
+        value_min=np.array([args.value_min], dtype=np.float32),
+        value_max=np.array([args.value_max], dtype=np.float32),
         input_jsonl=np.array([args.input_jsonl], dtype=object),
     )
 
@@ -253,10 +262,13 @@ def main():
         f.write(f"n_total_records\t{n_total}\n")
         f.write(f"n_kept_records\t{n_kept}\n")
         f.write(f"n_skipped_short\t{n_skipped_short}\n")
+        f.write(f"total_chunk_candidates\t{total_chunk_candidates}\n")
+        f.write(f"total_dropped_chunks\t{total_dropped_chunks}\n")
         f.write(f"total_chunks\t{total_chunks}\n")
         f.write(f"chunk_len\t{args.chunk_len}\n")
         f.write(f"stride\t{args.stride}\n")
         f.write(f"min_len\t{args.min_len}\n")
+        f.write("normalize\tchunk_mad\n")
         f.write(f"value_min\t{args.value_min}\n")
         f.write(f"value_max\t{args.value_max}\n")
 

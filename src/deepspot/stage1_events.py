@@ -24,11 +24,20 @@ EVENT_FEATURE_NAMES = [
 ]
 
 
+WINDOW_MAD_NORMALIZE_METHODS = {"window_mad", "chunk_mad"}
+
+
+def canonical_normalize_method(method: str) -> str:
+    if method == "chunk_mad":
+        return "window_mad"
+    return method
+
+
 def robust_normalize(signal: np.ndarray, method: str = "read_mad") -> tuple[np.ndarray, dict]:
     """Normalize one read-level signal.
 
-    `read_mad` is the default because per-window normalization can erase local
-    current shifts that may be informative for modifications.
+    `read_mad` is kept for backward compatibility. New Stage 1 chunk/window
+    building should usually use `window_mad` via `normalize_one_window`.
     """
     x = np.asarray(signal, dtype=np.float32)
     if method == "none":
@@ -47,6 +56,34 @@ def robust_normalize(signal: np.ndarray, method: str = "read_mad") -> tuple[np.n
         "median": med,
         "mad": mad,
     }
+
+
+def normalize_one_window(signal: np.ndarray) -> tuple[np.ndarray, dict]:
+    """Normalize one fixed-length window using the chunk-level MAD rule."""
+    x = np.asarray(signal, dtype=np.float32)
+    if x.size == 0:
+        return x, {"method": "window_mad", "median": 0.0, "mad": 0.0, "valid": False}
+
+    med = float(np.median(x))
+    mad = float(np.median(np.abs(x - med)))
+    if mad < 1e-8:
+        return np.array([], dtype=np.float32), {
+            "method": "window_mad",
+            "median": med,
+            "mad": mad,
+            "valid": False,
+        }
+
+    return ((x - med) / mad).astype(np.float32), {
+        "method": "window_mad",
+        "median": med,
+        "mad": mad,
+        "valid": True,
+    }
+
+
+def window_values_in_range(window: np.ndarray, value_min: float, value_max: float) -> bool:
+    return bool(np.all((window >= value_min) & (window <= value_max)))
 
 
 def sliding_window_starts(length: int, window_len: int, stride: int) -> np.ndarray:
@@ -139,6 +176,66 @@ def segment_piecewise_constant(
     return sorted(segments)
 
 
+def segment_piecewise_constant_ruptures(
+    signal: np.ndarray,
+    penalty: float = 8.0,
+    min_event_len: int = 5,
+    max_events: int = 16,
+) -> list[tuple[int, int]]:
+    """Segment one window with ruptures when the optional dependency exists."""
+    try:
+        import ruptures as rpt  # type: ignore
+    except ImportError as exc:  # pragma: no cover - optional dependency
+        raise ImportError(
+            "event_backend='ruptures' requires the optional dependency `ruptures`."
+        ) from exc
+
+    x = np.asarray(signal, dtype=np.float64)
+    n = int(x.size)
+    if n == 0:
+        return []
+    if n <= min_event_len or max_events <= 1:
+        return [(0, n)]
+
+    algo = rpt.Binseg(model="l2", min_size=min_event_len, jump=1).fit(x.reshape(-1, 1))
+    breakpoints = algo.predict(pen=penalty)
+    if len(breakpoints) > max_events:
+        breakpoints = algo.predict(n_bkps=max_events - 1)
+
+    prev = 0
+    segments = []
+    for end in breakpoints:
+        end = int(end)
+        if end > prev:
+            segments.append((prev, end))
+        prev = end
+    return segments or [(0, n)]
+
+
+def segment_signal_events(
+    signal: np.ndarray,
+    penalty: float = 8.0,
+    min_event_len: int = 5,
+    max_events: int = 16,
+    event_backend: str = "simple",
+) -> list[tuple[int, int]]:
+    if event_backend == "simple":
+        return segment_piecewise_constant(
+            signal,
+            penalty=penalty,
+            min_event_len=min_event_len,
+            max_events=max_events,
+        )
+    if event_backend == "ruptures":
+        return segment_piecewise_constant_ruptures(
+            signal,
+            penalty=penalty,
+            min_event_len=min_event_len,
+            max_events=max_events,
+        )
+    raise ValueError(f"Unsupported event backend: {event_backend}")
+
+
 def _slope(y: np.ndarray) -> float:
     if y.size < 2:
         return 0.0
@@ -185,13 +282,15 @@ def encode_window_events(
     max_events: int,
     penalty: float,
     min_event_len: int,
+    event_backend: str = "simple",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Segment a raw window and return padded event features plus metadata."""
-    events = segment_piecewise_constant(
+    events = segment_signal_events(
         signal,
         penalty=penalty,
         min_event_len=min_event_len,
         max_events=max_events,
+        event_backend=event_backend,
     )
     features = events_to_features(signal, events)
     event_dim = len(EVENT_FEATURE_NAMES)
@@ -219,11 +318,14 @@ def build_stage1_arrays_from_jsonl(
     penalty: float = 8.0,
     min_event_len: int = 5,
     min_signal_len: int = 128,
-    normalize: str = "read_mad",
+    normalize: str = "window_mad",
+    value_min: float = -3.0,
+    value_max: float = 3.0,
     sample_id: str = "",
     condition: str = "",
     max_reads: int = 0,
     max_windows: int = 0,
+    event_backend: str = "simple",
 ) -> dict:
     """Build fixed raw windows plus variable-event representations from JSONL.
 
@@ -233,6 +335,9 @@ def build_stage1_arrays_from_jsonl(
       - `label`, `pattern`, `mod_type`: optional metadata
     """
     input_jsonl = Path(input_jsonl)
+    normalize = canonical_normalize_method(normalize)
+    if value_min > value_max:
+        raise ValueError("value_min must be <= value_max.")
 
     raw_windows = []
     event_features = []
@@ -252,6 +357,9 @@ def build_stage1_arrays_from_jsonl(
     n_kept_reads = 0
     n_skipped_missing_signal = 0
     n_skipped_short = 0
+    n_window_candidates = 0
+    n_windows_dropped_mad = 0
+    n_windows_dropped_value_range = 0
 
     with input_jsonl.open("r", encoding="utf-8") as f:
         for line in f:
@@ -274,8 +382,13 @@ def build_stage1_arrays_from_jsonl(
                 n_skipped_short += 1
                 continue
 
-            signal_norm, norm_meta = robust_normalize(signal, method=normalize)
-            starts = sliding_window_starts(signal_norm.size, window_len, stride)
+            if normalize in WINDOW_MAD_NORMALIZE_METHODS:
+                signal_for_windows = signal
+                read_norm_meta = None
+            else:
+                signal_for_windows, read_norm_meta = robust_normalize(signal, method=normalize)
+
+            starts = sliding_window_starts(signal_for_windows.size, window_len, stride)
             if starts.size == 0:
                 n_skipped_short += 1
                 continue
@@ -284,14 +397,29 @@ def build_stage1_arrays_from_jsonl(
             label = record.get("label", "")
             pattern = record.get("pattern", "")
             mod_type = record.get("mod_type", "")
+            kept_for_read = 0
 
             for start in starts:
-                window = signal_norm[start : start + window_len].astype(np.float32)
+                n_window_candidates += 1
+                window_source = signal_for_windows[start : start + window_len].astype(np.float32)
+                if normalize in WINDOW_MAD_NORMALIZE_METHODS:
+                    window, norm_meta = normalize_one_window(window_source)
+                    if window.size == 0:
+                        n_windows_dropped_mad += 1
+                        continue
+                    if not window_values_in_range(window, value_min=value_min, value_max=value_max):
+                        n_windows_dropped_value_range += 1
+                        continue
+                else:
+                    window = window_source
+                    norm_meta = read_norm_meta
+
                 feats, mask, ev_starts, ev_ends = encode_window_events(
                     window,
                     max_events=max_events,
                     penalty=penalty,
                     min_event_len=min_event_len,
+                    event_backend=event_backend,
                 )
 
                 raw_windows.append(window)
@@ -307,11 +435,13 @@ def build_stage1_arrays_from_jsonl(
                 mod_types.append("" if mod_type is None else str(mod_type))
                 medians.append(float(norm_meta["median"]))
                 mads.append(float(norm_meta["mad"]))
+                kept_for_read += 1
 
                 if max_windows > 0 and len(raw_windows) >= max_windows:
                     break
 
-            n_kept_reads += 1
+            if kept_for_read > 0:
+                n_kept_reads += 1
             if max_windows > 0 and len(raw_windows) >= max_windows:
                 break
 
@@ -336,13 +466,19 @@ def build_stage1_arrays_from_jsonl(
         "n_kept_reads": n_kept_reads,
         "n_skipped_missing_signal": n_skipped_missing_signal,
         "n_skipped_short": n_skipped_short,
+        "n_window_candidates": n_window_candidates,
+        "n_windows_dropped_mad": n_windows_dropped_mad,
+        "n_windows_dropped_value_range": n_windows_dropped_value_range,
         "n_windows": int(raw_windows_arr.shape[0]),
         "window_len": window_len,
         "stride": stride,
         "max_events": max_events,
         "penalty": penalty,
         "min_event_len": min_event_len,
+        "event_backend": event_backend,
         "normalize": normalize,
+        "value_min": value_min,
+        "value_max": value_max,
     }
 
     return {
@@ -361,6 +497,8 @@ def build_stage1_arrays_from_jsonl(
         "conditions": np.asarray([condition] * len(read_ids), dtype=object),
         "read_norm_median": np.asarray(medians, dtype=np.float32),
         "read_norm_mad": np.asarray(mads, dtype=np.float32),
+        "norm_median": np.asarray(medians, dtype=np.float32),
+        "norm_mad": np.asarray(mads, dtype=np.float32),
         "event_feature_names": np.asarray(EVENT_FEATURE_NAMES, dtype=object),
         "summary_json": np.asarray([json.dumps(summary, ensure_ascii=False)], dtype=object),
     }
@@ -420,13 +558,16 @@ def build_stage1_arrays_from_ccf5(
     penalty: float = 8.0,
     min_event_len: int = 5,
     min_signal_len: int = 128,
-    normalize: str = "read_mad",
+    normalize: str = "window_mad",
+    value_min: float = -3.0,
+    value_max: float = 3.0,
     sample_id: str = "",
     condition: str = "",
     max_reads: int = 0,
     max_windows: int = 0,
     trim_head: int = 0,
     trim_tail: int = 0,
+    event_backend: str = "simple",
 ) -> dict:
     """Build Stage 1 arrays directly from one or more CCF5 files.
 
@@ -435,6 +576,9 @@ def build_stage1_arrays_from_ccf5(
     """
     if trim_head < 0 or trim_tail < 0:
         raise ValueError("trim_head and trim_tail must be non-negative.")
+    normalize = canonical_normalize_method(normalize)
+    if value_min > value_max:
+        raise ValueError("value_min must be <= value_max.")
 
     paths = [Path(p) for p in ccf5_paths]
     if not paths:
@@ -467,6 +611,9 @@ def build_stage1_arrays_from_ccf5(
     n_skipped_after_trim = 0
     n_skipped_read_fetch_error = 0
     n_skipped_signal_error = 0
+    n_window_candidates = 0
+    n_windows_dropped_mad = 0
+    n_windows_dropped_value_range = 0
 
     for ccf5_path in paths:
         n_files += 1
@@ -506,19 +653,39 @@ def build_stage1_arrays_from_ccf5(
                     n_skipped_after_trim += 1
                     continue
 
-                signal_norm, norm_meta = robust_normalize(signal_trimmed, method=normalize)
-                starts = sliding_window_starts(signal_norm.size, window_len, stride)
+                if normalize in WINDOW_MAD_NORMALIZE_METHODS:
+                    signal_for_windows = signal_trimmed
+                    read_norm_meta = None
+                else:
+                    signal_for_windows, read_norm_meta = robust_normalize(signal_trimmed, method=normalize)
+
+                starts = sliding_window_starts(signal_for_windows.size, window_len, stride)
                 if starts.size == 0:
                     n_skipped_after_trim += 1
                     continue
 
+                kept_for_read = 0
                 for start in starts:
-                    window = signal_norm[start : start + window_len].astype(np.float32)
+                    n_window_candidates += 1
+                    window_source = signal_for_windows[start : start + window_len].astype(np.float32)
+                    if normalize in WINDOW_MAD_NORMALIZE_METHODS:
+                        window, norm_meta = normalize_one_window(window_source)
+                        if window.size == 0:
+                            n_windows_dropped_mad += 1
+                            continue
+                        if not window_values_in_range(window, value_min=value_min, value_max=value_max):
+                            n_windows_dropped_value_range += 1
+                            continue
+                    else:
+                        window = window_source
+                        norm_meta = read_norm_meta
+
                     feats, mask, ev_starts, ev_ends = encode_window_events(
                         window,
                         max_events=max_events,
                         penalty=penalty,
                         min_event_len=min_event_len,
+                        event_backend=event_backend,
                     )
 
                     raw_windows.append(window)
@@ -538,11 +705,13 @@ def build_stage1_arrays_from_ccf5(
                     mads.append(float(norm_meta["mad"]))
                     source_files.append(str(ccf5_path))
                     trimmed_signal_lengths.append(int(signal_trimmed.size))
+                    kept_for_read += 1
 
                     if max_windows > 0 and len(raw_windows) >= max_windows:
                         break
 
-                n_kept_reads += 1
+                if kept_for_read > 0:
+                    n_kept_reads += 1
                 if max_windows > 0 and len(raw_windows) >= max_windows:
                     break
 
@@ -579,13 +748,19 @@ def build_stage1_arrays_from_ccf5(
         "n_skipped_after_trim": n_skipped_after_trim,
         "n_skipped_read_fetch_error": n_skipped_read_fetch_error,
         "n_skipped_signal_error": n_skipped_signal_error,
+        "n_window_candidates": n_window_candidates,
+        "n_windows_dropped_mad": n_windows_dropped_mad,
+        "n_windows_dropped_value_range": n_windows_dropped_value_range,
         "n_windows": int(raw_windows_arr.shape[0]),
         "window_len": window_len,
         "stride": stride,
         "max_events": max_events,
         "penalty": penalty,
         "min_event_len": min_event_len,
+        "event_backend": event_backend,
         "normalize": normalize,
+        "value_min": value_min,
+        "value_max": value_max,
         "trim_head": trim_head,
         "trim_tail": trim_tail,
     }
@@ -606,6 +781,8 @@ def build_stage1_arrays_from_ccf5(
         "conditions": np.asarray(conditions, dtype=object),
         "read_norm_median": np.asarray(medians, dtype=np.float32),
         "read_norm_mad": np.asarray(mads, dtype=np.float32),
+        "norm_median": np.asarray(medians, dtype=np.float32),
+        "norm_mad": np.asarray(mads, dtype=np.float32),
         "source_files": np.asarray(source_files, dtype=object),
         "trimmed_signal_lengths": np.asarray(trimmed_signal_lengths, dtype=np.int32),
         "event_feature_names": np.asarray(EVENT_FEATURE_NAMES, dtype=object),

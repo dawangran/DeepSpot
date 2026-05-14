@@ -209,6 +209,8 @@ def process_one_ccf5(
     skipped_after_trim = 0
     skipped_signal_error = 0
     skipped_read_fetch_error = 0
+    total_chunk_candidates = 0
+    total_dropped_chunks = 0
     total_chunks = 0
 
     file_start = time.time()
@@ -277,6 +279,8 @@ def process_one_ccf5(
             value_min=value_min,
             value_max=value_max,
         )
+        total_chunk_candidates += total_candidates
+        total_dropped_chunks += dropped_chunks
 
         if len(chunks) == 0:
             skipped_after_trim += 1
@@ -329,6 +333,7 @@ def process_one_ccf5(
         trimmed_lengths=all_trimmed_lengths,
         chunk_len=np.array([chunk_len], dtype=np.int32),
         stride=np.array([stride], dtype=np.int32),
+        normalize=np.array(["chunk_mad"], dtype=object),
         value_min=np.array([value_min], dtype=np.float32),
         value_max=np.array([value_max], dtype=np.float32),
         trim_head=np.array([trim_head], dtype=np.int32),
@@ -349,9 +354,12 @@ def process_one_ccf5(
         f.write(f"skipped_after_trim\t{skipped_after_trim}\n")
         f.write(f"skipped_read_fetch_error\t{skipped_read_fetch_error}\n")
         f.write(f"skipped_signal_error\t{skipped_signal_error}\n")
+        f.write(f"total_chunk_candidates\t{total_chunk_candidates}\n")
+        f.write(f"total_dropped_chunks\t{total_dropped_chunks}\n")
         f.write(f"total_chunks\t{total_chunks}\n")
         f.write(f"chunk_len\t{chunk_len}\n")
         f.write(f"stride\t{stride}\n")
+        f.write("normalize\tchunk_mad\n")
         f.write(f"value_min\t{value_min}\n")
         f.write(f"value_max\t{value_max}\n")
         f.write(f"trim_head\t{trim_head}\n")
@@ -373,6 +381,8 @@ def process_one_ccf5(
         "skipped_after_trim": skipped_after_trim,
         "skipped_read_fetch_error": skipped_read_fetch_error,
         "skipped_signal_error": skipped_signal_error,
+        "total_chunk_candidates": total_chunk_candidates,
+        "total_dropped_chunks": total_dropped_chunks,
         "total_chunks": total_chunks,
         "elapsed": elapsed,
     }
@@ -396,6 +406,8 @@ def main():
     parser.add_argument("--log_every_reads", type=int, default=500, help="Print progress every N reads")
     parser.add_argument("--log_file", default=None, help="Optional log file path; default is output_dir/run.log")
     args = parser.parse_args()
+    if args.value_min > args.value_max:
+        parser.error("--value_min must be <= --value_max")
 
     os.makedirs(args.output_dir, exist_ok=True)
     logger, log_file = setup_logger(args.output_dir, args.log_file)
@@ -422,6 +434,8 @@ def main():
     grand_skipped_trim = 0
     grand_fetch_err = 0
     grand_signal_err = 0
+    grand_chunk_candidates = 0
+    grand_dropped_chunks = 0
     grand_total_chunks = 0
 
     for idx, ccf5_path in enumerate(ccf5_files, start=1):
@@ -448,6 +462,8 @@ def main():
         grand_skipped_trim += stats["skipped_after_trim"]
         grand_fetch_err += stats["skipped_read_fetch_error"]
         grand_signal_err += stats["skipped_signal_error"]
+        grand_chunk_candidates += stats["total_chunk_candidates"]
+        grand_dropped_chunks += stats["total_dropped_chunks"]
         grand_total_chunks += stats["total_chunks"]
 
     total_elapsed = time.time() - job_start
@@ -456,6 +472,7 @@ def main():
         f"files={len(ccf5_files)} total_reads={grand_total_reads} kept_reads={grand_kept_reads} "
         f"skipped_short={grand_skipped_short} skipped_trim={grand_skipped_trim} "
         f"fetch_err={grand_fetch_err} signal_err={grand_signal_err} "
+        f"chunk_candidates={grand_chunk_candidates} dropped_chunks={grand_dropped_chunks} "
         f"total_chunks={grand_total_chunks} elapsed={total_elapsed:.1f}s"
     )
     logger.info("========== JOB END ==========")
