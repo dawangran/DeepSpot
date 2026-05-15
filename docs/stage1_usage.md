@@ -19,6 +19,7 @@
 ```text
 JSONL: 每行一个 read，至少包含 read-level signal
 CCF5: 一个或多个 .ccf5 文件，直接读取 read signal
+Chunk corpus: 由外部脚本先生成的 chunks/chunk_meta 语料，再二次构建 Stage 1 窗口
 ```
 
 JSONL 每行至少包含：
@@ -80,6 +81,31 @@ python3 scripts/stage1_build_windows.py \
   --sample_id U01 \
   --condition unmodified
 ```
+
+如果你已经用 `ccf5_chunk_chunk.py` 这类脚本生成了 chunk 语料目录，可以直接做二次构建：
+
+```bash
+python3 scripts/stage1_build_windows.py \
+  --input_chunk_corpus results/chunk_corpus \
+  --out_dir results/stage1/rebuilt \
+  --prefix rebuilt \
+  --sample_id U01 \
+  --condition unmodified \
+  --window_len 128 \
+  --max_events 16 \
+  --penalty 8.0 \
+  --min_event_len 5 \
+  --event_backend simple
+```
+
+语料目录里应至少包含成对文件：
+
+```text
+*.chunks.npy
+*.chunk_meta.npz
+```
+
+`chunk_meta.npz` 会被用来恢复 `read_id`、`window_start`、`signal_length` 等元数据，`chunks.npy` 则作为二次构建的 raw window 输入。
 
 使用 CCF5 输入时需要额外安装 `pyccf5`。`trim_head` 和 `trim_tail` 只作用于 CCF5，用于去掉 read 首尾不稳定 raw signal；输出的 `window_start` 保持为原 read raw-signal 坐标。
 

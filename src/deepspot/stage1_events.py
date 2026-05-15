@@ -504,6 +504,232 @@ def build_stage1_arrays_from_jsonl(
     }
 
 
+def _resolve_chunk_corpus_files(input_path: str | Path) -> list[Path]:
+    path = Path(input_path)
+    if path.is_file():
+        return [path]
+
+    if not path.exists():
+        raise FileNotFoundError(f"Chunk corpus path does not exist: {path}")
+
+    candidates = sorted(path.glob("*.chunk_meta.npz"))
+    if candidates:
+        return candidates
+
+    candidates = sorted(path.glob("*.corpus.npz"))
+    if candidates:
+        return candidates
+
+    candidates = sorted(path.glob("*.npz"))
+    if candidates:
+        return candidates
+
+    raise FileNotFoundError(
+        f"No corpus npz files found under {path}. Expected *.chunk_meta.npz or *.npz"
+    )
+
+
+def _load_chunk_corpus_arrays(corpus_path: Path) -> tuple[np.ndarray, dict]:
+    if corpus_path.suffix != ".npz":
+        raise ValueError(f"Unsupported corpus file: {corpus_path}")
+
+    if corpus_path.name.endswith(".chunk_meta.npz"):
+        chunks_path = corpus_path.with_name(corpus_path.name.replace(".chunk_meta.npz", ".chunks.npy"))
+        if not chunks_path.exists():
+            raise FileNotFoundError(f"Missing chunk array file for {corpus_path}: {chunks_path}")
+        chunks = np.load(chunks_path, allow_pickle=True).astype(np.float32)
+        meta = np.load(corpus_path, allow_pickle=True)
+        return chunks, dict(meta)
+
+    data = np.load(corpus_path, allow_pickle=True)
+    if "chunks" in data:
+        return data["chunks"].astype(np.float32), dict(data)
+    if "raw_signal" in data:
+        return data["raw_signal"].astype(np.float32), dict(data)
+    raise KeyError(f"{corpus_path} does not contain `chunks` or `raw_signal`.")
+
+
+def build_stage1_arrays_from_chunk_corpus(
+    input_corpus: str | Path,
+    window_len: int = 128,
+    max_events: int = 16,
+    penalty: float = 8.0,
+    min_event_len: int = 5,
+    sample_id: str = "",
+    condition: str = "",
+    max_windows: int = 0,
+    event_backend: str = "simple",
+) -> dict:
+    """Rebuild Stage 1 arrays from chunk-level corpus outputs.
+
+    This targets the secondary construction workflow where another script has
+    already generated normalized chunk windows and their metadata, and Stage 1
+    only needs to re-encode those windows into the unified schema used by PCA
+    and autoencoder baselines.
+    """
+    files = _resolve_chunk_corpus_files(input_corpus)
+
+    raw_windows = []
+    event_features = []
+    event_mask = []
+    event_starts = []
+    event_ends = []
+    read_ids = []
+    window_starts = []
+    signal_lengths = []
+    labels = []
+    patterns = []
+    mod_types = []
+    sample_ids = []
+    conditions = []
+    medians = []
+    mads = []
+    source_files = []
+
+    n_files = 0
+    n_windows = 0
+    n_skipped_empty = 0
+    n_skipped_shape = 0
+
+    for corpus_path in files:
+        n_files += 1
+        chunks, meta = _load_chunk_corpus_arrays(corpus_path)
+
+        if chunks.ndim != 2:
+            raise ValueError(f"Expected a 2D chunk matrix in {corpus_path}, got shape {chunks.shape}.")
+
+        n_rows = int(chunks.shape[0])
+        if max_windows > 0:
+            remaining = max_windows - n_windows
+            if remaining <= 0:
+                break
+            n_rows = min(n_rows, remaining)
+
+        chunk_len = int(chunks.shape[1])
+        if window_len != chunk_len:
+            raise ValueError(
+                f"window_len={window_len} does not match chunk length {chunk_len} in {corpus_path}"
+            )
+
+        for i in range(n_rows):
+            window = chunks[i].astype(np.float32)
+            if window.size == 0:
+                n_skipped_empty += 1
+                continue
+
+            feats, mask, ev_starts, ev_ends = encode_window_events(
+                window,
+                max_events=max_events,
+                penalty=penalty,
+                min_event_len=min_event_len,
+                event_backend=event_backend,
+            )
+
+            if feats.size == 0:
+                n_skipped_shape += 1
+                continue
+
+            raw_windows.append(window)
+            event_features.append(feats)
+            event_mask.append(mask)
+            event_starts.append(ev_starts)
+            event_ends.append(ev_ends)
+
+            read_id = ""
+            start = 0
+            signal_len = window_len
+            label = ""
+            pattern = ""
+            mod_type = ""
+            if meta is not None:
+                if "read_ids" in meta:
+                    read_id = str(meta["read_ids"][i])
+                if "starts" in meta:
+                    start = int(meta["starts"][i])
+                elif "chunk_starts" in meta:
+                    start = int(meta["chunk_starts"][i])
+                if "signal_lengths" in meta:
+                    signal_len = int(meta["signal_lengths"][i])
+                elif "trimmed_lengths" in meta:
+                    signal_len = int(meta["trimmed_lengths"][i])
+                elif "trimmed_signal_lengths" in meta:
+                    signal_len = int(meta["trimmed_signal_lengths"][i])
+                if "labels" in meta:
+                    label = str(meta["labels"][i])
+                if "patterns" in meta:
+                    pattern = str(meta["patterns"][i])
+                if "mod_types" in meta:
+                    mod_type = str(meta["mod_types"][i])
+
+            read_ids.append(read_id)
+            window_starts.append(start)
+            signal_lengths.append(signal_len)
+            labels.append(label)
+            patterns.append(pattern)
+            mod_types.append(mod_type)
+            sample_ids.append(sample_id)
+            conditions.append(condition)
+            medians.append(float(np.median(window)))
+            mads.append(float(np.median(np.abs(window - np.median(window)))))
+            source_files.append(str(corpus_path))
+            n_windows += 1
+
+        if max_windows > 0 and n_windows >= max_windows:
+            break
+
+    if raw_windows:
+        raw_windows_arr = np.stack(raw_windows, axis=0).astype(np.float32)
+        event_features_arr = np.stack(event_features, axis=0).astype(np.float32)
+        event_mask_arr = np.stack(event_mask, axis=0).astype(np.float32)
+        event_starts_arr = np.stack(event_starts, axis=0).astype(np.int32)
+        event_ends_arr = np.stack(event_ends, axis=0).astype(np.int32)
+    else:
+        raw_windows_arr = np.empty((0, window_len), dtype=np.float32)
+        event_features_arr = np.empty((0, max_events, len(EVENT_FEATURE_NAMES)), dtype=np.float32)
+        event_mask_arr = np.empty((0, max_events), dtype=np.float32)
+        event_starts_arr = np.empty((0, max_events), dtype=np.int32)
+        event_ends_arr = np.empty((0, max_events), dtype=np.int32)
+
+    summary = {
+        "input_format": "chunk_corpus",
+        "input_corpus": str(input_corpus),
+        "n_files": n_files,
+        "n_windows": int(raw_windows_arr.shape[0]),
+        "n_skipped_empty": n_skipped_empty,
+        "n_skipped_shape": n_skipped_shape,
+        "window_len": window_len,
+        "max_events": max_events,
+        "penalty": penalty,
+        "min_event_len": min_event_len,
+        "event_backend": event_backend,
+        "sample_id": sample_id,
+        "condition": condition,
+    }
+
+    return {
+        "raw_signal": raw_windows_arr,
+        "event_features": event_features_arr,
+        "event_mask": event_mask_arr,
+        "event_starts": event_starts_arr,
+        "event_ends": event_ends_arr,
+        "read_ids": np.asarray(read_ids, dtype=object),
+        "window_starts": np.asarray(window_starts, dtype=np.int64),
+        "signal_lengths": np.asarray(signal_lengths, dtype=np.int32),
+        "labels": np.asarray(labels, dtype=object),
+        "patterns": np.asarray(patterns, dtype=object),
+        "mod_types": np.asarray(mod_types, dtype=object),
+        "sample_ids": np.asarray(sample_ids, dtype=object),
+        "conditions": np.asarray(conditions, dtype=object),
+        "read_norm_median": np.asarray(medians, dtype=np.float32),
+        "read_norm_mad": np.asarray(mads, dtype=np.float32),
+        "norm_median": np.asarray(medians, dtype=np.float32),
+        "norm_mad": np.asarray(mads, dtype=np.float32),
+        "source_files": np.asarray(source_files, dtype=object),
+        "event_feature_names": np.asarray(EVENT_FEATURE_NAMES, dtype=object),
+        "summary_json": np.asarray([json.dumps(summary, ensure_ascii=False)], dtype=object),
+    }
+
+
 def _safe_get_ccf5_read(s5, read_id):
     """Read one CCF5 record while avoiding fragile aux-field decoding paths."""
     last_err = None
