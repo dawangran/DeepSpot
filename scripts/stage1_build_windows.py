@@ -5,6 +5,7 @@ import argparse
 import glob
 import importlib.util
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -59,6 +60,15 @@ def main() -> None:
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    logger = logging.getLogger("deepspot.stage1_build_windows")
+    logger.setLevel(logging.INFO)
+    logger.handlers.clear()
+    logger.propagate = False
+    fmt = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s", "%Y-%m-%d %H:%M:%S")
+    sh = logging.StreamHandler()
+    sh.setLevel(logging.INFO)
+    sh.setFormatter(fmt)
+    logger.addHandler(sh)
 
     if args.input_jsonl:
         arrays = build_stage1_arrays_from_jsonl(
@@ -89,6 +99,7 @@ def main() -> None:
             sample_id=args.sample_id,
             condition=args.condition,
             max_windows=args.max_windows,
+            logger=logger,
         )
     else:
         if args.input_ccf5_dir:

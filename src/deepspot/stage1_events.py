@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Sequence
 
@@ -559,6 +560,8 @@ def build_stage1_arrays_from_chunk_corpus(
     condition: str = "",
     max_windows: int = 0,
     event_backend: str = "simple",
+    log_every_windows: int = 5000,
+    logger: logging.Logger | None = None,
 ) -> dict:
     """Rebuild Stage 1 arrays from chunk-level corpus outputs.
 
@@ -568,6 +571,7 @@ def build_stage1_arrays_from_chunk_corpus(
     and autoencoder baselines.
     """
     files = _resolve_chunk_corpus_files(input_corpus)
+    logger = logger or logging.getLogger("deepspot.stage1_build_windows")
 
     raw_windows = []
     event_features = []
@@ -591,9 +595,30 @@ def build_stage1_arrays_from_chunk_corpus(
     n_skipped_empty = 0
     n_skipped_shape = 0
 
+    logger.info(
+        "chunk corpus rebuild start | input=%s files=%d window_len=%d max_events=%d penalty=%.3f "
+        "min_event_len=%d event_backend=%s max_windows=%d",
+        str(input_corpus),
+        len(files),
+        window_len,
+        max_events,
+        penalty,
+        min_event_len,
+        event_backend,
+        max_windows,
+    )
+
     for corpus_path in files:
         n_files += 1
         chunks, meta = _load_chunk_corpus_arrays(corpus_path)
+
+        logger.info(
+            "[%d/%d] loading corpus file: %s | chunks=%d",
+            n_files,
+            len(files),
+            corpus_path,
+            int(chunks.shape[0]),
+        )
 
         if chunks.ndim != 2:
             raise ValueError(f"Expected a 2D chunk matrix in {corpus_path}, got shape {chunks.shape}.")
@@ -674,6 +699,18 @@ def build_stage1_arrays_from_chunk_corpus(
             source_files.append(str(corpus_path))
             n_windows += 1
 
+            if log_every_windows > 0 and (n_windows % log_every_windows == 0):
+                logger.info(
+                    "chunk corpus progress | files=%d/%d windows=%d kept=%d empty=%d bad_shape=%d current_file=%s",
+                    n_files,
+                    len(files),
+                    n_windows,
+                    len(raw_windows),
+                    n_skipped_empty,
+                    n_skipped_shape,
+                    corpus_path,
+                )
+
         if max_windows > 0 and n_windows >= max_windows:
             break
 
@@ -705,6 +742,15 @@ def build_stage1_arrays_from_chunk_corpus(
         "sample_id": sample_id,
         "condition": condition,
     }
+
+    logger.info(
+        "chunk corpus rebuild done | files=%d windows=%d kept=%d empty=%d bad_shape=%d",
+        n_files,
+        n_windows,
+        int(raw_windows_arr.shape[0]),
+        n_skipped_empty,
+        n_skipped_shape,
+    )
 
     return {
         "raw_signal": raw_windows_arr,
